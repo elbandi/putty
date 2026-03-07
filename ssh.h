@@ -532,12 +532,24 @@ struct ecdsa_key {
     WeierstrassPoint *publicKey;
     mp_int *privateKey;
     ssh_key sshk;
+#ifdef PUTTY_CAC
+    char* appid;
+    int flags;
+    ptrlen publicKeyRaw;
+    ptrlen credId;
+#endif
 };
 struct eddsa_key {
     const struct ec_curve *curve;
     EdwardsPoint *publicKey;
     mp_int *privateKey;
     ssh_key sshk;
+#ifdef PUTTY_CAC
+    char* appid;
+    int flags;
+    ptrlen publicKeyRaw;
+    ptrlen credId;
+#endif
 };
 
 WeierstrassPoint *ecdsa_public(mp_int *private_key, const ssh_keyalg *alg);
@@ -1263,6 +1275,12 @@ extern const ssh_keyalg ssh_ecdsa_ed448;
 extern const ssh_keyalg ssh_ecdsa_nistp256;
 extern const ssh_keyalg ssh_ecdsa_nistp384;
 extern const ssh_keyalg ssh_ecdsa_nistp521;
+#ifdef PUTTY_CAC
+extern const ssh_keyalg ssh_ecdsa_nistp256_sk;
+extern const ssh_keyalg ssh_ecdsa_nistp384_sk;
+extern const ssh_keyalg ssh_ecdsa_nistp521_sk;
+extern const ssh_keyalg ssh_ecdsa_ed25519_sk;
+#endif
 extern const ssh_keyalg opensshcert_ssh_dsa;
 extern const ssh_keyalg opensshcert_ssh_rsa;
 extern const ssh_keyalg opensshcert_ssh_rsa_sha256;

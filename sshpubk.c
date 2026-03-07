@@ -17,6 +17,9 @@
 #include "ssh.h"
 #include "misc.h"
 
+#ifdef PUTTY_CAC
+#include "cert_common.h"
+#endif // PUTTY_CAC
 /*
  * Fairly arbitrary size limit on any public or private key blob.
  * Chosen to match AGENT_MAX_MSGLEN, on the basis that any key too
@@ -558,6 +561,12 @@ const ssh_keyalg *const all_keyalgs[] = {
     &ssh_ecdsa_nistp256,
     &ssh_ecdsa_nistp384,
     &ssh_ecdsa_nistp521,
+#ifdef PUTTY_CAC
+    &ssh_ecdsa_nistp256_sk,
+    &ssh_ecdsa_nistp384_sk,
+    &ssh_ecdsa_nistp521_sk,
+    &ssh_ecdsa_ed25519_sk,
+#endif
     &ssh_ecdsa_ed25519,
     &ssh_ecdsa_ed448,
     &opensshcert_ssh_dsa,
@@ -1003,6 +1012,16 @@ ssh2_userkey *ppk_load_s(BinarySource *src, const char *passphrase,
 ssh2_userkey *ppk_load_f(const Filename *filename, const char *passphrase,
                          const char **errorstr)
 {
+#ifdef PUTTY_CAC
+    if (cert_is_certpath(filename->cpath)) {
+        ssh2_userkey* ret = cert_load_key(filename->cpath);
+        if (ret == NULL) {
+            *errorstr = "load key from certificate failed";
+        }
+        return ret;
+    }
+#endif // PUTTY_CAC	
+
     LoadedFile *lf = lf_load_keyfile(filename, errorstr);
     ssh2_userkey *toret;
     if (lf) {
@@ -1314,6 +1333,22 @@ bool ppk_loadpub_s(BinarySource *src, char **algorithm, BinarySink *bs,
 bool ppk_loadpub_f(const Filename *filename, char **algorithm, BinarySink *bs,
                    char **commentptr, const char **errorstr)
 {
+#ifdef PUTTY_CAC
+    if (cert_is_certpath(filename->cpath)) {
+        struct ssh2_userkey* userkey = cert_load_key(filename->cpath);
+        if (userkey == NULL || userkey->key == NULL) {
+            *errorstr = "load key from certificate failed";
+            return false;
+        }
+        if (algorithm) { *algorithm = dupstr(userkey->key->vt->ssh_id); }
+        if (commentptr) { *commentptr = userkey->comment; }
+        userkey->key->vt->public_blob(userkey->key, bs);
+        userkey->key->vt->freekey(userkey->key);
+        sfree(userkey);
+        return true;
+    }
+#endif // PUTTY_CAC
+
     LoadedFile *lf = lf_load_keyfile(filename, errorstr);
     if (!lf)
         return false;
@@ -1649,6 +1684,15 @@ static char *ssh2_pubkey_openssh_str_internal(const char *comment,
     return buffer;
 }
 
+#ifdef PUTTY_CAC
+char* ssh2_pubkey_openssh_str_direct(const char* comment,
+                                     const void* v_pub_blob,
+                                     int pub_len)
+{
+    return ssh2_pubkey_openssh_str_internal(comment, v_pub_blob, pub_len);
+}
+#endif // PUTTY_CAC
+
 char *ssh2_pubkey_openssh_str(ssh2_userkey *key)
 {
     strbuf *blob;
@@ -1916,6 +1960,12 @@ int key_type_s(BinarySource *src)
 
 int key_type(const Filename *filename)
 {
+#ifdef PUTTY_CAC
+	if (cert_is_certpath(filename->cpath)) {
+		return SSH_KEYTYPE_SSH2;
+	}
+#endif // PUTTY_CAC
+
     LoadedFile *lf = lf_new(1024);
     if (lf_load(lf, filename) == LF_ERROR) {
         lf_free(lf);

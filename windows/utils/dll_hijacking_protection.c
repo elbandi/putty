@@ -19,6 +19,14 @@
 
 void dll_hijacking_protection(void)
 {
+#ifdef PUTTY_CAC
+    /* Windows has a bug that prevents loading of smart card libaries if
+     * a non-default search order is used; also, ActivClient has issues
+     * loading the credential interface on some systems if this is enabled.
+     */
+    return;
+#endif // PUTTY_CAC
+
     static HMODULE kernel32_module;
     DECL_WINDOWS_FUNCTION(static, BOOL, SetDefaultDllDirectories, (DWORD));
 

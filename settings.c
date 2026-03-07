@@ -12,6 +12,9 @@
 #include "ssh/gss.h"
 #endif
 
+#ifdef PUTTY_CAC
+#include "cert_common.h"
+#endif // PUTTY_CAC
 
 /* The cipher order given here is the default order. */
 static const struct keyvalwhere ciphernames[] = {
@@ -644,6 +647,10 @@ void save_open_settings(settings_w *sesskey, Conf *conf)
     wprefs(sesskey, "GSSLibs", gsslibkeywords, ngsslibs, conf, CONF_ssh_gsslist);
     write_setting_filename(sesskey, "GSSCustom", conf_get_filename(conf, CONF_ssh_gss_custom));
 #endif
+#ifdef PUTTY_CAC
+    write_setting_b(sesskey, "AuthCAPI", conf_get_bool(conf, CONF_cert_attempt_auth));
+    write_setting_s(sesskey, "CAPICertID", conf_get_str(conf, CONF_cert_fingerprint));
+#endif // PUTTY_CAC
 #ifdef OSX_META_KEY_CONFIG
     write_setting_b(sesskey, "OSXOptionMeta", conf_get_bool(conf, CONF_osx_option_meta));
     write_setting_b(sesskey, "OSXCommandMeta", conf_get_bool(conf, CONF_osx_command_meta));
@@ -941,6 +948,14 @@ void load_open_settings(settings_r *sesskey, Conf *conf)
            gsslibkeywords, ngsslibs, conf, CONF_ssh_gsslist);
     gppfile(sesskey, "GSSCustom", conf, CONF_ssh_gss_custom);
 #endif
+#ifdef PUTTY_CAC
+    gppb(sesskey, "AuthCAPI", 0, conf, CONF_cert_attempt_auth);
+    gpps(sesskey, "CAPICertID", "", conf, CONF_cert_fingerprint);
+
+	// convert certificate identifiers from old format
+	char * certid = conf_get_str(conf, CONF_cert_fingerprint);
+	conf_set_str(conf, CONF_cert_fingerprint, certid);
+#endif // PUTTY_CAC
     {
         int storageval = gppi_raw(sesskey, "RemoteQTitleAction", -1);
         int confval;

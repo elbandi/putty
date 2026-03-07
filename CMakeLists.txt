@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.7...3.28)
 project(putty LANGUAGES C)
+if(PUTTY_CAC)
+enable_language(CXX)
+endif()
 
 set(CMAKE_C_STANDARD 99)
 

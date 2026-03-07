@@ -207,3 +207,36 @@ target_link_libraries(test_terminal
   guiterminal settings eventloop utils ${platform_libraries})
 
 add_sources_from_current_dir(test_conf no-jump-list.c handle-wait.c)
+
+if(PUTTY_CAC)
+target_link_libraries(puttytel crypto utils network sshclient)
+target_link_libraries(pterm crypto utils network sshclient)
+target_include_directories(crypto PUBLIC ../contrib)
+target_include_directories(crypto PUBLIC ../crypto)
+target_include_directories(crypto PUBLIC ../cert)
+target_include_directories(sshcommon PUBLIC ../cert)
+target_include_directories(settings PUBLIC ../cert)
+target_include_directories(agent PUBLIC ../cert)
+target_include_directories(guiterminal PUBLIC ../cert)
+target_include_directories(sshclient PUBLIC ../cert)
+target_include_directories(testcrypt PUBLIC ../cert)
+target_include_directories(puttygen PUBLIC ../cert)
+add_sources_from_current_dir(crypto
+../import.c
+../cert/cert_common.c
+../cert/cert_capi.c
+../cert/cert_capi_tools.cc
+../cert/cert_fido.c
+../cert/cert_pkcs.c)
+
+add_executable(puttyimp
+  puttyimp.c puttyimp.rc)
+target_link_directories(puttyimp PUBLIC
+  ../contrib/libfido2/lib/${CMAKE_GENERATOR_PLATFORM},
+  contrib/libfido2/lib/${CMAKE_GENERATOR_PLATFORM})
+target_include_directories(puttyimp PUBLIC ../contrib/libfido2/include)
+set_target_properties(puttyimp PROPERTIES
+  WIN32_EXECUTABLE OFF
+  LINK_FLAGS "/MANIFESTUAC:\"level='requireAdministrator' uiAccess='false'\"")
+installed_program(puttyimp)
+endif()

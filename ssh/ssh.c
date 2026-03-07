@@ -29,6 +29,10 @@
 #define GSS_CTXT_MAYFAIL (1<<3) /* Context may expire during handshake */
 #endif
 
+#ifdef PUTTY_CAC
+#include "cert_common.h"
+#endif // PUTTY_CAC
+
 struct Ssh {
     Socket *s;
     Seat *seat;
@@ -251,6 +255,17 @@ static void ssh_got_ssh_version(struct ssh_version_receiver *rcv,
                 transport_child_layer = connection_layer;
             } else {
                 char *username = get_remote_username(ssh->conf);
+
+#ifdef PUTTY_CAC
+				if (conf_get_bool(ssh->conf, CONF_cert_attempt_auth) &&
+					cert_is_certpath(conf_get_str(ssh->conf, CONF_cert_fingerprint)))
+				{
+					char * cert = conf_get_str(ssh->conf, CONF_cert_fingerprint);
+					Filename * entry = filename_from_str(cert);
+					conf_set_filename(ssh->conf, CONF_keyfile, entry);
+					filename_free(entry);
+				}
+#endif // PUTTY_CAC
 
                 userauth_layer = ssh2_userauth_new(
                     connection_layer, ssh->savedhost, ssh->savedport,

@@ -97,6 +97,9 @@
 
 <?define ProgramName = "PuTTY$(var.Bitness)" ?>
 
+<?ifdef PUTTY_CAC ?>
+  <?define PuTTYimp_Component_GUID = "F6BFDB1B-6B1E-49F2-8E50-267B867160C7" ?>
+<?endif ?>
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
 
   <!--
@@ -329,6 +332,13 @@ https://msdn.microsoft.com/en-us/library/windows/desktop/dd391569(v=vs.85).aspx
                            Key="$(var.RegKeyPathLocation)\PathEntry"
                            Type="string" Value="" KeyPath="yes" />
           </Component>
+          <?ifdef PUTTY_CAC ?>
+          <Component Id="PuTTYimp_Component"
+                     Guid="$(var.PuTTYimp_Component_GUID)">
+            <File Id="PuTTYimp_File"
+                  Source="$(var.Builddir)puttyimp.exe" KeyPath="yes" />
+          </Component>
+          <?endif ?>
         </Directory>
       </Directory>
 
@@ -446,6 +456,9 @@ https://msdn.microsoft.com/en-us/library/windows/desktop/dd391569(v=vs.85).aspx
       <ComponentRef Id="LICENCE_Component" />
       <ComponentRef Id="README_Component" />
       <ComponentRef Id="ProgramMenuDir" />
+      <?ifdef PUTTY_CAC ?>
+      <ComponentRef Id="PuTTYimp_Component" />
+      <?endif ?>
     </Feature>
     <Feature Id="DesktopFeature" Level="2" Absent="allow" AllowAdvertise="no"
              Title="Add shortcut to PuTTY on the Desktop">
