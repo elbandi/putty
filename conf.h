@@ -341,6 +341,16 @@ CONF_OPTION(try_gssapi_kex, /* attempt gssapi via ssh kex */
     VALUE_TYPE(BOOL),
     LOAD_CUSTOM, SAVE_CUSTOM, /* under #ifndef NO_GSSAPI */
 )
+#ifdef PUTTY_CAC
+CONF_OPTION(cert_attempt_auth,
+    VALUE_TYPE(BOOL),
+    LOAD_CUSTOM, SAVE_CUSTOM,
+)
+CONF_OPTION(cert_fingerprint,
+    VALUE_TYPE(STR),
+    LOAD_CUSTOM, SAVE_CUSTOM,
+)
+#endif // PUTTY_CAC
 CONF_OPTION(gssapifwd, /* forward tgt via gss */
     VALUE_TYPE(BOOL),
     LOAD_CUSTOM, SAVE_CUSTOM, /* under #ifndef NO_GSSAPI */

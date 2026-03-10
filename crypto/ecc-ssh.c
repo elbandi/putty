@@ -1405,6 +1405,216 @@ const ssh_keyalg ssh_ecdsa_nistp521 = {
     .extra = &sign_extra_nistp521,
 };
 
+#ifdef PUTTY_CAC
+static ssh_key* ecdsa_new_priv_openssh_sk(
+    const ssh_keyalg* alg, BinarySource* src)
+{
+    const struct ecsign_extra* extra =
+        (const struct ecsign_extra*)alg->extra;
+    struct ec_curve* curve = extra->curve();
+    assert(curve->type == EC_WEIERSTRASS);
+
+    get_string(src);
+
+    struct ecdsa_key* ek = snew(struct ecdsa_key);
+    ek->sshk.vt = alg;
+    ek->curve = curve;
+    ek->privateKey = NULL;
+
+    // get the raw key since their no way to extract it later
+    ek->publicKeyRaw = get_string(src);
+    BinarySource_REWIND_TO(src, src->pos - ek->publicKeyRaw.len - sizeof(int));
+    ek->publicKey = get_wpoint(src, curve);
+
+    // the raw key will be preceded by byte indicating the compression type 
+    // which we will assume is uncompressed and will throw away
+    ek->publicKeyRaw.ptr = ((char*) ek->publicKeyRaw.ptr) + 1;
+    ek->publicKeyRaw.len--;
+    ek->publicKeyRaw.ptr = mkstr(ek->publicKeyRaw);
+
+    // get appid and cred id
+    ek->appid = mkstr(get_string(src));
+    ek->flags = get_byte(src);
+    ek->credId = get_string(src);
+    ek->credId.ptr = mkstr(ek->credId);
+    
+    // reserved
+    get_string(src);
+
+    return &ek->sshk;
+}
+
+static void ecdsa_freekey_sk(ssh_key* key)
+{
+    struct ecdsa_key* ek = container_of(key, struct ecdsa_key, sshk);
+
+    // free sk specific values and call standard function to free rest
+    if (ek->appid) sfree(ek->appid);
+    if (ek->credId.ptr) sfree(ek->credId.ptr);
+    if (ek->publicKeyRaw.ptr) sfree(ek->publicKeyRaw.ptr);
+    ecdsa_freekey(key);
+}
+
+static void ecdsa_public_blob_sk(ssh_key* key, BinarySink* bs)
+{
+    struct ecdsa_key* ek = container_of(key, struct ecdsa_key, sshk);
+
+    // call standard function but add on appid
+    ecdsa_public_blob(key, bs);
+    put_stringz(bs, ek->appid);
+}
+
+const ssh_keyalg ssh_ecdsa_nistp256_sk = {
+    .new_pub = ecdsa_new_pub,
+    .new_priv = ecdsa_new_priv,
+    .new_priv_openssh = ecdsa_new_priv_openssh_sk,
+    .freekey = ecdsa_freekey_sk,
+    .invalid = ec_signkey_invalid,
+    .sign = ecdsa_sign,
+    .verify = ecdsa_verify,
+    .public_blob = ecdsa_public_blob_sk,
+    .private_blob = ecdsa_private_blob,
+    .openssh_blob = ecdsa_openssh_blob,
+    .has_private = ecdsa_has_private,	
+    .cache_str = ecdsa_cache_str,
+    .components = ecdsa_components,
+    .base_key = nullkey_base_key,	
+    .pubkey_bits = ec_shared_pubkey_bits,
+	.supported_flags = nullkey_supported_flags,
+    .alternate_ssh_id = nullkey_alternate_ssh_id,
+    .alg_desc = ec_alg_desc,
+    .variable_size = nullkey_variable_size_no,
+    .ssh_id = "sk-ecdsa-sha2-nistp256@openssh.com",
+    .cache_id = "sk-ecdsa-sha2-nistp256@openssh.com",
+    .extra = &sign_extra_nistp256,
+};
+
+const ssh_keyalg ssh_ecdsa_nistp384_sk = {
+    .new_pub = ecdsa_new_pub,
+    .new_priv = ecdsa_new_priv,
+    .new_priv_openssh = ecdsa_new_priv_openssh_sk,
+    .freekey = ecdsa_freekey_sk,
+    .invalid = ec_signkey_invalid,
+    .sign = ecdsa_sign,
+    .verify = ecdsa_verify,
+    .public_blob = ecdsa_public_blob_sk,
+    .private_blob = ecdsa_private_blob,
+    .openssh_blob = ecdsa_openssh_blob,
+    .has_private = ecdsa_has_private,	
+    .cache_str = ecdsa_cache_str,
+    .components = ecdsa_components,
+    .base_key = nullkey_base_key,	
+    .pubkey_bits = ec_shared_pubkey_bits,
+	.supported_flags = nullkey_supported_flags,
+    .alternate_ssh_id = nullkey_alternate_ssh_id,
+    .alg_desc = ec_alg_desc,
+    .variable_size = nullkey_variable_size_no,
+    .ssh_id = "sk-ecdsa-sha2-nistp384@openssh.com",
+    .cache_id = "sk-ecdsa-sha2-nistp384@openssh.com",
+    .extra = &sign_extra_nistp384,
+};
+
+const ssh_keyalg ssh_ecdsa_nistp521_sk = {
+    .new_pub = ecdsa_new_pub,
+    .new_priv = ecdsa_new_priv,
+    .new_priv_openssh = ecdsa_new_priv_openssh_sk,
+    .freekey = ecdsa_freekey_sk,
+    .invalid = ec_signkey_invalid,
+    .sign = ecdsa_sign,
+    .verify = ecdsa_verify,
+    .public_blob = ecdsa_public_blob_sk,
+    .private_blob = ecdsa_private_blob,
+    .openssh_blob = ecdsa_openssh_blob,
+    .has_private = ecdsa_has_private,	
+    .cache_str = ecdsa_cache_str,
+    .components = ecdsa_components,
+    .base_key = nullkey_base_key,	
+    .pubkey_bits = ec_shared_pubkey_bits,
+	.supported_flags = nullkey_supported_flags,
+    .alternate_ssh_id = nullkey_alternate_ssh_id,
+    .alg_desc = ec_alg_desc,
+    .variable_size = nullkey_variable_size_no,
+    .ssh_id = "sk-ecdsa-sha2-nistp521@openssh.com",
+    .cache_id = "sk-ecdsa-sha2-nistp521@openssh.com",
+    .extra = &sign_extra_nistp521,
+};
+
+static ssh_key* eddsa_new_priv_openssh_sk(
+    const ssh_keyalg* alg, BinarySource* src)
+{
+    const struct ecsign_extra* extra =
+        (const struct ecsign_extra*)alg->extra;
+    struct ec_curve* curve = extra->curve();
+    assert(curve->type == EC_EDWARDS);
+
+    struct eddsa_key* ek = snew(struct eddsa_key);
+    ek->sshk.vt = alg;
+    ek->curve = curve;
+    ek->privateKey = NULL;
+
+    // get the raw key since their no way to extract it later
+    ek->publicKeyRaw = get_string(src);
+    ek->publicKey = eddsa_decode(ek->publicKeyRaw, curve);
+    ek->publicKeyRaw.ptr = mkstr(ek->publicKeyRaw);
+
+    // get appid and cred id
+    ek->appid = mkstr(get_string(src));
+    ek->flags = get_byte(src);
+    ek->credId = get_string(src);
+    ek->credId.ptr = mkstr(ek->credId);
+
+    // reserved
+    get_string(src);
+
+    return &ek->sshk;
+}
+
+static void eddsa_freekey_sk(ssh_key* key)
+{
+    struct eddsa_key* ek = container_of(key, struct eddsa_key, sshk);
+    
+    // free sk specific values and call standard function to free rest
+    if (ek->appid) sfree(ek->appid);
+    if (ek->credId.ptr) sfree(ek->credId.ptr);
+    if (ek->publicKeyRaw.ptr) sfree(ek->publicKeyRaw.ptr);
+    eddsa_freekey(key);
+}
+
+static void eddsa_public_blob_sk(ssh_key* key, BinarySink* bs)
+{
+    struct eddsa_key* ek = container_of(key, struct eddsa_key, sshk);
+
+    put_stringz(bs, ek->sshk.vt->ssh_id);
+    put_epoint(bs, ek->publicKey, ek->curve, false);
+    put_stringz(bs, ek->appid);
+}
+
+const ssh_keyalg ssh_ecdsa_ed25519_sk = {
+    .new_pub = eddsa_new_pub,
+    .new_priv = eddsa_new_priv,
+    .new_priv_openssh = eddsa_new_priv_openssh_sk,
+    .freekey = eddsa_freekey_sk,
+    .invalid = ec_signkey_invalid,
+    .sign = eddsa_sign,
+    .verify = eddsa_verify,
+    .public_blob = eddsa_public_blob_sk,
+    .private_blob = eddsa_private_blob,
+    .openssh_blob = eddsa_openssh_blob,
+    .has_private = eddsa_has_private,
+    .cache_str = eddsa_cache_str,
+    .components = eddsa_components,
+    .base_key = nullkey_base_key,	
+    .pubkey_bits = ec_shared_pubkey_bits,
+	.supported_flags = nullkey_supported_flags,
+    .alternate_ssh_id = nullkey_alternate_ssh_id,
+    .alg_desc = ec_alg_desc,
+    .variable_size = nullkey_variable_size_no,
+    .ssh_id = "sk-ssh-ed25519@openssh.com",
+    .cache_id = "sk-ssh-ed25519@openssh.com",
+    .extra = &sign_extra_ed25519,
+};
+#endif // PUTTY_CAC
+
 /* ----------------------------------------------------------------------
  * Exposed ECDH interfaces
  */

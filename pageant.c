@@ -12,6 +12,9 @@
 #include "sshcr.h"
 #include "pageant.h"
 
+#ifdef PUTTY_CAC
+#include "cert_common.h"
+#endif // PUTTY_CAC
 /*
  * We need this to link with the RSA code, because rsa_ssh1_encrypt()
  * pads its data with random bytes. Since we only use rsa_ssh1_decrypt()
@@ -441,6 +444,15 @@ static bool pageant_add_ssh2_key(ssh2_userkey *skey)
         pub->comment = dupstr(skey->comment);
 
     /* Duplicate the ssh_key to go in priv */
+#ifdef PUTTY_CAC
+    if (cert_is_certpath(skey->comment))
+    {
+        ssh2_userkey * userkey = cert_load_key(skey->comment);
+        priv->skey = userkey->key;
+        priv->encrypted_key_comment = userkey->comment;
+        sfree(userkey);
+    } else
+#endif // PUTTY_CAC
     {
         strbuf *tmp = strbuf_new_nm();
         ssh_key_openssh_blob(skey->key, BinarySink_UPCAST(tmp));
@@ -648,7 +660,6 @@ static void signop_unlink(PageantSignOp *so)
 static void signop_free(PageantAsyncOp *pao)
 {
     PageantSignOp *so = container_of(pao, PageantSignOp, pao);
-    signop_unlink(so);
     strbuf_free(so->data_to_sign);
     sfree(so);
 }
@@ -723,6 +734,25 @@ static void signop_coroutine(PageantAsyncOp *pao)
     }
 
     strbuf *signature = strbuf_new();
+#ifdef PUTTY_CAC
+    if (cert_is_certpath(so->priv->encrypted_key_comment))
+    {
+        ssh2_userkey* newkey = cert_load_key(so->priv->encrypted_key_comment);
+        if (newkey == NULL)
+        {
+            response = strbuf_new();
+            failure(so->pao.info->pc, so->pao.reqid, response, so->failure_type,
+                "key invalid: %s", so->priv->encrypted_key_comment);
+            sfree(invalid);
+            goto respond;
+        }
+        cert_sign(newkey, (LPCBYTE)so->data_to_sign->u, so->data_to_sign->len, so->flags, signature);
+        newkey->key->vt->freekey(newkey->key);
+        sfree(newkey->comment);
+        sfree(newkey);
+    }
+    else
+#endif // PUTTY_CAC
     ssh_key_sign(so->priv->skey, ptrlen_from_strbuf(so->data_to_sign),
                  so->flags, BinarySink_UPCAST(signature));
 
@@ -1103,6 +1133,16 @@ static PageantAsyncOp *pageant_make_op(
             fail("key not found");
             goto responded;
         }
+#ifdef PUTTY_CAC
+        char* fingerprint = ssh2_fingerprint_blob(keyblob, SSH_FPTYPE_DEFAULT);
+        BOOL bContinue = cert_confirm_signing(fingerprint, pub->comment);
+        sfree(fingerprint);
+        if (!bContinue)
+        {
+            fail("signed operationg blocked by user");
+            goto responded;
+        }
+#endif // PUTTY_CAC
 
         if (have_flags)
             pageant_client_log(pc, reqid, "signature flags = 0x%08"PRIx32,
@@ -1195,6 +1235,26 @@ static PageantAsyncOp *pageant_make_op(
             goto add2_cleanup;
         }
 
+#ifdef PUTTY_CAC
+		/* scan the message looking for a capi, fido, or pkcs identifier */
+        size_t current_pos = msg->pos;
+		for (ptrlen t = get_string(msg); t.len != 0; t = get_string(msg))
+		{
+            char * search = dupprintf("%.*s", (int) t.len, t.ptr);
+			if (cert_is_certpath(search))
+			{
+                ssh2_userkey * newkey = cert_load_key(search);
+                if (newkey == NULL) continue; else key = newkey;
+                BinarySource_REWIND_TO(msg, ((char *) t.ptr - (char*) msg->data) - 4);
+                sfree(search);
+                break;
+			}
+            sfree(search);
+		}
+
+        if (key->key == NULL) BinarySource_REWIND_TO(msg, current_pos);
+		if (key->key == NULL)
+#endif // PUTTY_CAC
         key->key = ssh_key_new_priv_openssh(alg, msg);
 
         if (!key->key) {
@@ -2690,3 +2750,21 @@ void pageant_pubkey_free(struct pageant_pubkey *key)
     strbuf_free(key->blob);
     sfree(key);
 }
+
+#ifdef PUTTY_CAC
+// defined in sshpubk
+char* ssh2_pubkey_openssh_str_direct(const char* comment, const void* v_pub_blob, int pub_len);
+
+char* pageant_nth_ssh2_string(int i)
+{
+    PageantPublicKey* pkey = pageant_nth_pubkey(2, i);
+    return ssh2_pubkey_openssh_str_direct(pkey->comment, pkey->base_pub->s, pkey->base_pub->len);
+}
+
+char* pageant_nth_ssh2_comment(int i)
+{
+    PageantPublicKey* pkey = pageant_nth_pubkey(2, i);
+    if (pkey == NULL) return NULL;
+    return pkey->comment;
+}
+#endif // PUTTY_CAC

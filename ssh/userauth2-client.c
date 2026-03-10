@@ -16,6 +16,9 @@
 #include "gss.h"
 #endif
 
+#ifdef PUTTY_CAC
+#include "cert_common.h"
+#endif // PUTTY_CAC
 #define BANNER_LIMIT 131072
 
 typedef struct agent_key {
@@ -303,6 +306,12 @@ static bool ssh2_userauth_signflags(struct ssh2_userauth_state *s,
         return false;          /* we don't know how to upgrade this */
 
     unsigned supported_flags = ssh_keyalg_supported_flags(alg);
+
+#ifdef PUTTY_CAC
+    const char* comment = (s->agent_keys_len > 0 && s->publickey_algorithm != *algname) ? s->agent_keys[s->agent_key_index].comment->s : s->publickey_comment;
+    s->ppl.bpp->ext_info_rsa_sha256_ok = s->ppl.bpp->ext_info_rsa_sha256_ok && cert_test_hash(comment, SSH_AGENT_RSA_SHA2_256);
+    s->ppl.bpp->ext_info_rsa_sha512_ok = s->ppl.bpp->ext_info_rsa_sha512_ok && cert_test_hash(comment, SSH_AGENT_RSA_SHA2_512);
+#endif // PUTTY_CAC
 
     if (s->ppl.bpp->ext_info_rsa_sha512_ok &&
         (supported_flags & SSH_AGENT_RSA_SHA2_512)) {
@@ -1071,6 +1080,14 @@ static void ssh2_userauth_process_queue(PacketProtocolLayer *ppl)
                         s, s->pktout, s->agent_keyalg, ptrlen_from_strbuf(
                             s->agent_keys[s->agent_key_index].blob));
 
+#ifdef PUTTY_CAC
+                    // switch focus to agent so cred prompts focus properly
+                    if (cert_is_capipath(s->agent_keys[s->agent_key_index].comment->s))
+                    {
+                        const HWND hWindowPageant = FindWindow("Pageant", "Pageant");
+                        if (hWindowPageant != NULL) SetForegroundWindow(hWindowPageant);
+                    }
+#endif
                     /* Ask agent for signature. */
                     agentreq = strbuf_new_for_agent_query();
                     put_byte(agentreq, SSH2_AGENTC_SIGN_REQUEST);
@@ -1297,6 +1314,14 @@ static void ssh2_userauth_process_queue(PacketProtocolLayer *ppl)
                     put_data(sigdata, s->pktout->data + 5,
                              s->pktout->length - 5);
                     sigblob = strbuf_new();
+#ifdef PUTTY_CAC
+					if (cert_is_certpath(key->comment))
+					{
+						ptrlen datatosign = ptrlen_from_strbuf(sigdata);
+						cert_sign(key, datatosign.ptr, datatosign.len, s->signflags, sigblob);
+					}
+					else
+#endif // PUTTY_CAC
                     ssh_key_sign(key->key, ptrlen_from_strbuf(sigdata),
                                  s->signflags, BinarySink_UPCAST(sigblob));
                     strbuf_free(sigdata);

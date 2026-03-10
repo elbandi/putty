@@ -10,6 +10,9 @@
 #include "dialog.h"
 #include "storage.h"
 #include "tree234.h"
+#ifdef PUTTY_CAC
+#include "cert_common.h"
+#endif // PUTTY_CAC
 
 #define PRINTER_DISABLED_STRING "None (printing disabled)"
 
@@ -786,6 +789,384 @@ struct sessionsaver_data {
     bool midsession;
     char *savedsession;     /* the current contents of ssd->editbox */
 };
+
+#ifdef PUTTY_CAC
+struct cert_data {
+	dlgcontrol* cert_set_pkcs_button, * cert_set_fido_button, * cert_set_capi_button, * cert_clear_button, * cert_view_button,
+		* cert_thumbprint_text, * cert_copy_clipboard_button, * cert_enable_auth, * cert_auth_checkbox;
+};
+
+void cert_event_handler(dlgcontrol* ctrl, dlgparam* dlg, void* data, int event)
+{
+	Conf* conf = (Conf*)data;
+	struct cert_data* certd = (struct cert_data*)ctrl->context.p;
+
+	// use the clear button initialization to prepopulate the thumbprint field
+	if (ctrl == certd->cert_clear_button && event == EVENT_REFRESH)
+	{
+		char* szCert = conf_get_str(conf, CONF_cert_fingerprint);
+		if (cert_is_certpath(szCert))
+		{
+			dlg_text_set(certd->cert_thumbprint_text, dlg, szCert);
+		}
+	}
+
+	// handle copy clipboard button press
+	if (ctrl == certd->cert_copy_clipboard_button && event == EVENT_ACTION)
+	{
+		char* szCert = conf_get_str(conf, CONF_cert_fingerprint);
+		char* szKeyString = cert_key_string(szCert);
+		if (szKeyString == NULL) return;
+        write_aclip(NULL, CLIP_SYSTEM, szKeyString, strlen(szKeyString));
+		sfree(szKeyString);
+	}
+
+	// handle view clipboard button press
+	if (ctrl == certd->cert_view_button && event == EVENT_ACTION)
+	{
+		char* szCert = conf_get_str(conf, CONF_cert_fingerprint);
+		cert_display_cert(szCert, NULL);
+	}
+
+	// handle certificate clear button press
+	if (ctrl == certd->cert_clear_button && event == EVENT_ACTION)
+	{
+		dlg_text_set(certd->cert_thumbprint_text, dlg, "<no certificate / key selected>");
+		conf_set_str(conf, CONF_cert_fingerprint, "");
+		conf_set_bool(conf, CONF_cert_attempt_auth, 0);
+		dlg_checkbox_set(certd->cert_auth_checkbox, dlg, 0);
+	}
+
+	// handle capi certificate set button press
+	if (ctrl == certd->cert_set_capi_button && event == EVENT_ACTION)
+	{
+		char* szCert = cert_prompt(IDEN_CAPI, FALSE, NULL);
+		if (szCert == NULL) return;
+		conf_set_str(conf, CONF_cert_fingerprint, szCert);
+		conf_set_bool(conf, CONF_cert_attempt_auth, 1);
+		dlg_checkbox_set(certd->cert_auth_checkbox, dlg, 1);
+		dlg_text_set(certd->cert_thumbprint_text, dlg, szCert);
+		sfree(szCert);
+	}
+
+	// handle pkcs certificate set button press
+	if (ctrl == certd->cert_set_pkcs_button && event == EVENT_ACTION)
+	{
+		char* szCert = cert_prompt(IDEN_PKCS, FALSE, NULL);
+		if (szCert == NULL) return;
+		conf_set_str(conf, CONF_cert_fingerprint, szCert);
+		conf_set_bool(conf, CONF_cert_attempt_auth, 1);
+		dlg_checkbox_set(certd->cert_auth_checkbox, dlg, 1);
+		*strrchr(szCert, '=') = '\0';
+		dlg_text_set(certd->cert_thumbprint_text, dlg, szCert);
+		sfree(szCert);
+	}
+
+	// handle fido certificate set button press
+	if (ctrl == certd->cert_set_fido_button && event == EVENT_ACTION)
+	{
+		char* szCert = cert_prompt(IDEN_FIDO, FALSE, NULL);
+		if (szCert == NULL) return;
+		conf_set_str(conf, CONF_cert_fingerprint, szCert);
+		conf_set_bool(conf, CONF_cert_attempt_auth, 1);
+		dlg_checkbox_set(certd->cert_auth_checkbox, dlg, 1);
+		dlg_text_set(certd->cert_thumbprint_text, dlg, szCert);
+		sfree(szCert);
+	}
+}
+
+struct fido_data {
+	dlgcontrol* fido_create_key_button, * fido_delete_key_button, * fido_import_key_button, * fido_import_ssh_button,
+        * fido_clear_key_button, * fido_algo_combobox, * fido_display_text, * fido_app_text, * fido_verification_radio, * fido_resident_radio;
+};
+
+void fido_event_handler(dlgcontrol* ctrl, dlgparam* dlg, void* data, int event)
+{
+
+	Conf* conf = (Conf*)data;
+	struct fido_data* fidod = (struct fido_data*)ctrl->context.p;
+	static const char* szAlgTable[] = {
+		"ecdsa-sha2-nistp256",
+		"ecdsa-sha2-nistp384",
+		"ecdsa-sha2-nistp521",
+		"ssh-ed25519"
+	};
+
+	// handle fido key clear button press
+	if (ctrl == fidod->fido_clear_key_button && event == EVENT_ACTION)
+	{
+		fido_clear_keys();
+	}
+
+	// handle fido key import button press
+	if (ctrl == fidod->fido_import_key_button && event == EVENT_ACTION)
+	{
+		fido_import_keys();
+	}
+
+    // handle fido ssh key import button press
+    if (ctrl == fidod->fido_import_ssh_button && event == EVENT_ACTION)
+    {
+        char * szAppId = fido_import_openssh_key();
+        if (szAppId != NULL) 
+        {
+            // alert user of success and ask about assignment
+            if (MessageBoxW(NULL, L"FIDO OpenSSH key import was successful " \
+                L"and has been added to the FIDO cache. Do you want to assign the key to the current session?",
+                L"FIDO OpenSSH Key Import Successful", MB_SYSTEMMODAL | MB_ICONQUESTION | MB_YESNO) == IDYES)
+            {
+                char* szCert = dupprintf("FIDO:%s", szAppId);
+                conf_set_str(conf, CONF_cert_fingerprint, szCert);
+                conf_set_bool(conf, CONF_cert_attempt_auth, 1);
+                sfree(szCert);
+            }
+            sfree(szAppId);
+        }
+        else
+        {
+            MessageBoxW(NULL, L"No file was selected or the selected file could not be read.",
+                L"FIDO OpenSSH Key Import Failed", MB_SYSTEMMODAL | MB_ICONERROR | MB_OK);
+        }
+    }
+
+	// handle fido key create button press
+	if (ctrl == fidod->fido_create_key_button && event == EVENT_ACTION)
+	{
+		// special alert about unusual types
+		const char* szAlgId = szAlgTable[dlg_listbox_index(fidod->fido_algo_combobox, dlg)];
+		if ((strcmp(szAlgId, "ecdsa-sha2-nistp384") == 0 || strcmp(szAlgId, "ecdsa-sha2-nistp521") == 0) &&
+			MessageBoxW(NULL, L"PuTTY CAC supports selected algorithm but most security tokens " \
+				L"do not. As a result, key creation may fail or you may see repeated, unresolvable PIN prompts " \
+				L"during creation even though you are typing the correct PIN. Do you wish to continue?",
+				L"FIDO Key Type Warning", MB_SYSTEMMODAL | MB_ICONQUESTION | MB_YESNO) != IDYES) return;
+
+		// display name
+		char* szDisplayName = dlg_editbox_get(fidod->fido_display_text, dlg);
+		if (szDisplayName == NULL || strlen(szDisplayName) == 0) {
+			MessageBoxW(NULL, L"The value provided for display name is not valid. " \
+				L"This value cannot be blank. " \
+				L"Please check this value and try again.",
+				L"FIDO Key Creation Parameters Invalid", MB_SYSTEMMODAL | MB_ICONERROR | MB_OK);
+			return;
+		}
+
+		// sanity check on parameters
+		char* szAppId = dlg_editbox_get(fidod->fido_app_text, dlg);
+		if (szAppId == NULL || strstr(szAppId, "ssh:") != szAppId)
+		{
+			MessageBoxW(NULL, L"The value provided for application name is not valid. " \
+				L"This value must begin for 'ssh:' for compatibility reasons. " \
+				L"Please check this value and try again.",
+				L"FIDO Key Creation Parameters Invalid", MB_SYSTEMMODAL | MB_ICONERROR | MB_OK);
+			return;
+		}
+
+		// first see if a duplicate key exists
+		char* szCertDupCheck = dupprintf("FIDO:%s", szAppId);
+		PCERT_CONTEXT pCert = NULL;
+		HCERTSTORE hCertStore = NULL;
+		BOOL bKeyExists = cert_load_cert(szCertDupCheck, &pCert, &hCertStore);
+		sfree(szCertDupCheck);
+		if (bKeyExists)
+		{
+			CertFreeCertificateContext(pCert);
+			CertCloseStore(hCertStore, 0);
+			if (MessageBoxW(NULL, L"It appears that a FIDO key with this name may already exist. " \
+				L"PuTTY CAC may not be able to determine which key to use. Are you sure you want to continue?",
+				L"FIDO Duplicate Key Detected", MB_SYSTEMMODAL | MB_ICONQUESTION | MB_YESNO) != IDYES) return;
+		}
+
+		// fetch options from resident key and verification boxes
+		int bResidentKey = (dlg_radiobutton_get(fidod->fido_resident_radio, dlg) == 0);
+		int bVerificationRequired = (dlg_radiobutton_get(fidod->fido_verification_radio, dlg) == 1);
+
+		// attempt to create key
+		if (fido_create_key(szAlgId, szDisplayName, szAppId, bResidentKey, bVerificationRequired))
+		{
+			// alert user of success and ask about assignment
+			if (MessageBoxW(NULL, L"FIDO key creation was successful and has been added to the FIDO cache. " \
+				L"Do you want to assign the new key to the current session?",
+				L"FIDO Key Creation Successful", MB_SYSTEMMODAL | MB_ICONQUESTION | MB_YESNO) == IDYES)
+			{
+				char* szCert = dupprintf("FIDO:%s", szAppId);
+				conf_set_str(conf, CONF_cert_fingerprint, szCert);
+				conf_set_bool(conf, CONF_cert_attempt_auth, 1);
+				sfree(szCert);
+			}
+		}
+		else MessageBoxW(NULL, L"PuTTY could not create the key on the token. Verify that a " \
+			L"compatible token is attached. You may have also entered the PIN incorrectly " \
+			L"or the token may not support the selected algorithm / parameters.",
+			L"FIDO Key Creation Failed", MB_SYSTEMMODAL | MB_ICONERROR | MB_OK);
+
+		sfree(szAppId);
+	}
+
+	// handle fido key delete button press
+	if (ctrl == fidod->fido_delete_key_button && event == EVENT_ACTION)
+	{
+		char* szCert = cert_prompt(IDEN_FIDO, FALSE,
+			L"Select a FIDO key to remove. If this is a resident key, it will also " \
+			L"be deleted from the token.");
+		if (szCert == NULL) return;
+
+		fido_delete_key(szCert);
+		sfree(szCert);
+	}
+
+	// handle key algorithm key combo box population
+	if (ctrl == fidod->fido_algo_combobox && event == EVENT_REFRESH)
+	{
+		dlg_update_start(ctrl, dlg);
+		dlg_listbox_clear(ctrl, dlg);
+		for (int iIndex = 0; iIndex < _countof(szAlgTable); iIndex++)
+			dlg_listbox_add(ctrl, dlg, szAlgTable[iIndex]);
+		dlg_listbox_select(ctrl, dlg, 0);
+		dlg_update_done(ctrl, dlg);
+	}
+
+	// default text for display name
+	if (ctrl == fidod->fido_display_text && event == EVENT_REFRESH)
+	{
+		dlg_editbox_set(ctrl, dlg, "SSH FIDO Key");
+	}
+
+	// default text for application name
+	if (ctrl == fidod->fido_app_text && event == EVENT_REFRESH)
+	{
+		dlg_editbox_set(ctrl, dlg, "ssh:");
+	}
+
+	// handle default radio bottom selection
+	if (ctrl == fidod->fido_resident_radio && event == EVENT_REFRESH ||
+		ctrl == fidod->fido_verification_radio && event == EVENT_REFRESH)
+	{
+		dlg_radiobutton_set(ctrl, dlg, 0);
+	}
+}
+
+struct capi_data {
+	dlgcontrol* capi_create_key_button, * capi_delete_key_button, * capi_provider_radio, * capi_algo_combobox,
+		* capi_name_text, * capi_no_expired_checkbox, * capi_smartcard_only_checkbox, * capi_trusted_certs_checkbox,
+		* cert_store_button;
+};
+
+void capi_event_handler(dlgcontrol* ctrl, dlgparam* dlg, void* data, int event)
+{
+	Conf* conf = (Conf*)data;
+
+	struct capi_data* capid = (struct capi_data*)ctrl->context.p;
+	static const char* szAlgTable[] = {
+		"rsa-1024",
+		"rsa-2048",
+		"rsa-3072",
+		"rsa-4096",
+		"ecdsa-sha2-nistp256",
+		"ecdsa-sha2-nistp384",
+		"ecdsa-sha2-nistp521"
+	};
+
+	// handle certificate filter - ignore expired
+	if (ctrl == capid->capi_no_expired_checkbox && event == EVENT_REFRESH)
+		dlg_checkbox_set(ctrl, dlg, cert_ignore_expired_certs(CERT_QUERY));
+	if (ctrl == capid->capi_no_expired_checkbox && event == EVENT_VALCHANGE)
+		cert_ignore_expired_certs(dlg_checkbox_get(ctrl, dlg));
+
+	// handle certificate filter - smartcard only expired
+	if (ctrl == capid->capi_smartcard_only_checkbox && event == EVENT_REFRESH)
+		dlg_checkbox_set(ctrl, dlg, cert_smartcard_certs_only(CERT_QUERY));
+	if (ctrl == capid->capi_smartcard_only_checkbox && event == EVENT_VALCHANGE)
+		cert_smartcard_certs_only(dlg_checkbox_get(ctrl, dlg));
+
+	// handle certificate filter - trusted only
+	if (ctrl == capid->capi_trusted_certs_checkbox && event == EVENT_REFRESH)
+		dlg_checkbox_set(ctrl, dlg, cert_trusted_certs_only(CERT_QUERY));
+	if (ctrl == capid->capi_trusted_certs_checkbox && event == EVENT_VALCHANGE)
+		cert_trusted_certs_only(dlg_checkbox_get(ctrl, dlg));
+
+	// handle key algorithm key combo box population
+	if (ctrl == capid->capi_algo_combobox && event == EVENT_REFRESH)
+	{
+		dlg_update_start(ctrl, dlg);
+		dlg_listbox_clear(ctrl, dlg);
+		for (int iIndex = 0; iIndex < _countof(szAlgTable); iIndex++)
+			dlg_listbox_add(ctrl, dlg, szAlgTable[iIndex]);
+		dlg_listbox_select(ctrl, dlg, 1);
+		dlg_update_done(ctrl, dlg);
+	}
+
+	// handle capi key create button press
+	if (ctrl == capid->capi_create_key_button && event == EVENT_ACTION)
+	{
+        // fetch options for provider type
+        int bHardwareToken = (dlg_radiobutton_get(capid->capi_provider_radio, dlg) == 0);
+
+		// special alert about unusual types
+		const char* szAlgId = szAlgTable[dlg_listbox_index(capid->capi_algo_combobox, dlg)];
+		if (bHardwareToken && (strcmp(szAlgId, "rsa-4096") == 0 || strcmp(szAlgId, "ecdsa-sha2-nistp521") == 0) &&
+			MessageBoxW(NULL, L"PuTTY CAC supports the selected algorithm but many security tokens " \
+				L"do not. As a result, key creation may fail. Do you wish to continue?",
+				L"CAPI Key Type Warning", MB_SYSTEMMODAL | MB_ICONQUESTION | MB_YESNO) != IDYES) return;
+
+		char* szSubjectName = dlg_editbox_get(capid->capi_name_text, dlg);
+		if (strlen(szSubjectName) == 0)
+		{
+			MessageBoxW(NULL, L"You must specify a subject name for the certificate.",
+				L"No Subject Name", MB_SYSTEMMODAL | MB_ICONERROR | MB_OK);
+			sfree(szSubjectName);
+			return;
+		}
+
+        // attempt to create certificate
+        char* szCert = cert_capi_create_key(szAlgId, szSubjectName, bHardwareToken);
+        if (szCert != NULL)
+        {
+            if (MessageBoxW(NULL, L"Certificate was successfully created. " \
+                L"Do you want to assign the new certificate to the current session?",
+                L"CAPI Certificate Creation Successful", MB_SYSTEMMODAL | MB_ICONQUESTION | MB_YESNO) == IDYES)
+            {
+                conf_set_str(conf, CONF_cert_fingerprint, szCert);
+                conf_set_bool(conf, CONF_cert_attempt_auth, 1);                   
+            }
+            sfree(szCert);
+        }
+        else
+        {
+            MessageBoxW(NULL, L"PuTTY could not create the certificate. " \
+                L"For hardware tokens, verify that a compatible token is attached. You may " \
+                L"have also incorrectly entered the PIN incorrectly " \
+                L"or the token may not support the selected algorithm.",
+                L"CAPI Certificate Creation Failed", MB_SYSTEMMODAL | MB_ICONERROR | MB_OK);
+        }
+
+		sfree(szSubjectName);
+	}
+
+	// handle capi key delete button press
+	if (ctrl == capid->capi_delete_key_button && event == EVENT_ACTION)
+	{
+		char* szCert = cert_prompt(IDEN_CAPI, FALSE,
+			L"Select a CAPI key to remove. If this key on a smart card or token, " \
+			L"PuTTY will attempt to delete it from there as well.");
+		if (szCert == NULL) return;
+
+		cert_capi_delete_key(szCert);
+		sfree(szCert);
+	}
+
+	// handle oepn certificate store button press
+	if (ctrl == capid->cert_store_button && event == EVENT_ACTION)
+	{
+		ShellExecuteW(NULL, L"open", L"certmgr.msc", NULL, NULL, SW_SHOWNORMAL);
+	}
+
+	// handle default radio bottom selection
+	if (ctrl == capid->capi_provider_radio && event == EVENT_REFRESH)
+	{
+		dlg_radiobutton_set(ctrl, dlg, 0);
+	}
+}
+#endif // PUTTY_CAC
 
 static void sessionsaver_data_free(void *ssdv)
 {
@@ -2875,7 +3256,188 @@ void setup_config_box(struct controlbox *b, bool midsession,
         }
 
         if (!midsession) {
+#ifdef PUTTY_CAC
+			/*
+			 * The Connection/SSH/Certificate panel.
+			 */
+			ctrl_settitle(b, "Connection/SSH/Certificate",
+				"Options controlling certificate / key authentication");
+			struct cert_data* certd = (struct cert_data*)ctrl_alloc(b, sizeof(struct cert_data));
 
+			// panel and option to enable certificate auth
+			s = ctrl_getset(b, "Connection/SSH/Certificate", "methods",
+				"Authentication methods");
+			certd->cert_auth_checkbox = ctrl_checkbox(
+				s, "Attempt certificate / key authentication", NO_SHORTCUT,
+				HELPCTX(no_help), conf_checkbox_handler, I(CONF_cert_attempt_auth));
+			ctrl_text(s, "Note: Enabling certificate / key authentication will override any PuTTY " \
+				"key file under the 'Auth' tab.  This setting has no effect " \
+				"when using pageant.", HELPCTX(no_help));
+
+			// section for certificate selection
+			s = ctrl_getset(b, "Connection/SSH/Certificate", "params", "Authentication parameters");
+			ctrl_columns(s, 3, 40, 20, 40);
+
+			// buttons to support setting and remove of certificate
+			certd->cert_set_capi_button = ctrl_pushbutton(s, "Set CAPI Cert...",
+				NO_SHORTCUT, HELPCTX(no_help), cert_event_handler, P(certd));
+			certd->cert_set_capi_button->column = 0;
+			certd->cert_set_pkcs_button = ctrl_pushbutton(s, "Set PKCS Cert...",
+				NO_SHORTCUT, HELPCTX(no_help), cert_event_handler, P(certd));
+			certd->cert_set_pkcs_button->column = 0;
+			certd->cert_set_fido_button = ctrl_pushbutton(s, "Set FIDO Key...",
+				NO_SHORTCUT, HELPCTX(no_help), cert_event_handler, P(certd));
+			certd->cert_set_fido_button->column = 0;
+			certd->cert_clear_button = ctrl_pushbutton(s, "Clear Selected",
+				NO_SHORTCUT, HELPCTX(no_help), cert_event_handler, P(certd));
+			certd->cert_clear_button->column = 2;
+			certd->cert_view_button = ctrl_pushbutton(s, "View Selected",
+				NO_SHORTCUT, HELPCTX(no_help), cert_event_handler, P(certd));
+			certd->cert_view_button->column = 2;
+
+			// textbox for thumbprint
+			ctrl_text(s, " ", HELPCTX(no_help));
+			ctrl_text(s, "Selected thumbprint:", HELPCTX(no_help));
+			certd->cert_thumbprint_text = ctrl_text(s, "<no key or certificate selected>", HELPCTX(no_help));
+
+			// button for keystring
+			ctrl_text(s, " ", HELPCTX(no_help));
+			ctrl_text(s, "Authorized Keys file value:", HELPCTX(no_help));
+			certd->cert_copy_clipboard_button = ctrl_pushbutton(s, "Copy To Clipboard",
+				NO_SHORTCUT, HELPCTX(no_help), cert_event_handler, P(certd));
+			certd->cert_copy_clipboard_button->column = 0;
+
+			/*
+			 * The Connection/SSH/FIDO Tools panel.
+			 */
+			ctrl_settitle(b, "Connection/SSH/Certificate/FIDO Tools",
+				"Wizard for managing keys on FIDO tokens");
+			struct fido_data* fidod = (struct fido_data*)ctrl_alloc(b, sizeof(struct fido_data));
+
+			// section for fido creation
+			s = ctrl_getset(b, "Connection/SSH/Certificate/FIDO Tools", "params", "Creation parameters");
+			ctrl_columns(s, 3, 45, 10, 45);
+
+			fidod->fido_algo_combobox = ctrl_droplist(s, "Key Algorithm:", 't',
+				65, HELPCTX(no_help), fido_event_handler, P(fidod));
+
+            fidod->fido_app_text = ctrl_editbox(s, "Application Name:", NO_SHORTCUT, 64,
+                HELPCTX(no_help), fido_event_handler, P(fidod), I(0));
+
+			fidod->fido_display_text = ctrl_editbox(s, "Display Name:", NO_SHORTCUT, 64,
+				HELPCTX(no_help), fido_event_handler, P(fidod), I(0));
+
+			fidod->fido_resident_radio = ctrl_radiobuttons(s,
+				"Key type:", 'r', 1, HELPCTX(no_help), fido_event_handler,
+				P(fidod), "Resident Key", I(FORCE_OFF),
+				"Non-Resident Key", I(FORCE_OFF), NULL);
+			fidod->fido_resident_radio->column = 0;
+
+			fidod->fido_verification_radio = ctrl_radiobuttons(
+				s, "User Verification:", 'u', 1, HELPCTX(no_help), fido_event_handler,
+				P(fidod), "Key touch", I(false), "Key touch & PIN", I(true), NULL);
+			fidod->fido_verification_radio->column = 2;
+
+			fidod->fido_create_key_button = ctrl_pushbutton(s, "Create Key...",
+				NO_SHORTCUT, HELPCTX(no_help), fido_event_handler, P(fidod));
+			fidod->fido_create_key_button->column = 2;
+
+			// section for fido imports
+			s = ctrl_getset(b, "Connection/SSH/Certificate/FIDO Tools", "import_params", "Key management");
+
+			// adjust so we have two columns with a small separation in the middle
+			ctrl_columns(s, 3, 45, 10, 45);
+
+			fidod->fido_clear_key_button = ctrl_pushbutton(s, "Clear Key Cache",
+				NO_SHORTCUT, HELPCTX(no_help), fido_event_handler, P(fidod));
+			fidod->fido_clear_key_button->column = 0;
+
+			fidod->fido_import_key_button = ctrl_pushbutton(s, "Import Keys...",
+				NO_SHORTCUT, HELPCTX(no_help), fido_event_handler, P(fidod));
+			fidod->fido_import_key_button->column = 2;
+
+            fidod->fido_import_ssh_button = ctrl_pushbutton(s, "Import Key File...",
+                NO_SHORTCUT, HELPCTX(no_help), fido_event_handler, P(fidod));
+            fidod->fido_import_ssh_button->column = 2;
+
+			fidod->fido_delete_key_button = ctrl_pushbutton(s, "Delete Key...",
+				NO_SHORTCUT, HELPCTX(no_help), fido_event_handler, P(fidod));
+			fidod->fido_delete_key_button->column = 0;
+
+            ctrl_text(s, "Note: The 'Import Keys' function requires elevated local permissions to succeed.", HELPCTX(no_help));
+
+			/*
+			 * The Connection/SSH/CAPI Tools panel.
+			 */
+			ctrl_settitle(b, "Connection/SSH/Certificate/CAPI Tools",
+				"Wizard for managing CAPI certificates");
+			struct capi_data* capid = (struct capi_data*)ctrl_alloc(b, sizeof(struct cert_data));
+
+			// section for capi creation
+			s = ctrl_getset(b, "Connection/SSH/Certificate/CAPI Tools", "params", "Creation parameters");
+            ctrl_text(s, "Use this to create a self-signed certificate. In business " \
+                "environments, hardware tokens may not be writable.", HELPCTX(no_help));
+			ctrl_columns(s, 3, 45, 10, 45);
+
+			capid->capi_algo_combobox = ctrl_droplist(s, "Key Algorithm:", 't',
+				65, HELPCTX(no_help), capi_event_handler, P(capid));
+
+			capid->capi_name_text = ctrl_editbox(s, "Subject Name:", NO_SHORTCUT, 64,
+				HELPCTX(no_help), capi_event_handler, P(capid), I(0));
+			ctrl_text(s, "The subject name is used to identify the certificate in " \
+				"PUTTY CAC dialog boxes. ", HELPCTX(no_help));
+
+			capid->capi_provider_radio = ctrl_radiobuttons(s,
+				"Provider type:", 'r', 1, HELPCTX(no_help), capi_event_handler,
+				P(capid), "Smart Card / Token", I(FORCE_OFF),
+				"Software", I(FORCE_OFF), NULL);
+			capid->capi_provider_radio->column = 0;
+
+			ctrl_text(s, " ", HELPCTX(no_help))->column = 2;
+			capid->capi_create_key_button = ctrl_pushbutton(s, "Create Key...",
+				NO_SHORTCUT, HELPCTX(no_help), capi_event_handler, P(capid));
+			capid->capi_create_key_button->column = 2;
+
+			// selection for capi filter
+			s = ctrl_getset(b, "Connection/SSH/Certificate/CAPI Tools", "filter_params", "Certificate selection filters");
+			ctrl_columns(s, 3, 45, 10, 45);
+
+			ctrl_text(s, "Use these options to filter the certificates shown in " \
+				"PuTTY and Pageant certificate selection dialog boxes.", HELPCTX(no_help));
+
+            if (!cert_trusted_certs_only(CERT_ENFORCED))
+            {
+                capid->capi_trusted_certs_checkbox = ctrl_checkbox(s, "Only Trusted",
+                    NO_SHORTCUT, HELPCTX(no_help), capi_event_handler, P(capid));
+                capid->capi_trusted_certs_checkbox->column = 0;
+            }
+
+            if (!cert_smartcard_certs_only(CERT_ENFORCED))
+            {
+                capid->capi_smartcard_only_checkbox = ctrl_checkbox(s, "Only Smart Card",
+                    NO_SHORTCUT, HELPCTX(no_help), capi_event_handler, P(capid));
+                capid->capi_smartcard_only_checkbox->column = 0;
+            }
+
+            if (!cert_ignore_expired_certs(CERT_ENFORCED))
+            {
+                capid->capi_no_expired_checkbox = ctrl_checkbox(s, "Not Expired",
+                    NO_SHORTCUT, HELPCTX(no_help), capi_event_handler, P(capid));
+                capid->capi_no_expired_checkbox->column = 2;
+            }
+
+			// selection for other options filter
+			s = ctrl_getset(b, "Connection/SSH/Certificate/CAPI Tools", "other_params", "Other options");
+			ctrl_columns(s, 3, 45, 10, 45);
+
+			capid->cert_store_button = ctrl_pushbutton(s, "Open Store...",
+				NO_SHORTCUT, HELPCTX(no_help), capi_event_handler, P(capid));
+			capid->cert_store_button->column = 0;
+
+			capid->capi_delete_key_button = ctrl_pushbutton(s, "Delete Key...",
+				NO_SHORTCUT, HELPCTX(no_help), capi_event_handler, P(capid));
+			capid->capi_delete_key_button->column = 2;
+#endif // PUTTY_CAC
             /*
              * The Connection/SSH/Auth panel.
              */
